@@ -25,6 +25,24 @@ class SearchResponse(BaseModel):
     uncertainty: bool
     message: str
 
+ALLOWED_SOURCE_TYPES = {
+    "government",
+    "government-linked",
+    "international_organisation",
+    "bilateral_institution",
+    "consulting",
+    "industry_body",
+    "business_media",
+    "academic-cultural-framework"
+}
+
+BLOCKED_SOURCE_TYPES = {
+    "low_trust",
+    "user_generated",
+    "promotional",
+    "ai_generated"
+}
+
 BLOCKED_KEYWORDS = [
     "reddit",
     "quora",
@@ -213,6 +231,18 @@ def detect_route(query: str) -> Optional[str]:
 
     return max(route_scores, key=route_scores.get)
 
+def apply_source_governance(results: List[SearchResult]) -> List[SearchResult]:
+    filtered = []
+
+    for result in results:
+        if result.source_type in BLOCKED_SOURCE_TYPES:
+            continue
+        if result.source_type not in ALLOWED_SOURCE_TYPES:
+            continue
+        filtered.append(result)
+
+    return filtered
+
 @app.get("/")
 def root():
     return {"message": "India Trainer Action API is running"}
@@ -242,7 +272,9 @@ def search_sources(request: SearchRequest):
             message="No sufficiently trusted source route found for this query. Do not infer beyond the retrieval output."
         )
 
-    results = ROUTE_RESULTS.get(route, [])[:request.max_results]
+    raw_results = ROUTE_RESULTS.get(route, [])
+    governed_results = apply_source_governance(raw_results)
+    results = governed_results[:request.max_results]
 
     if not results:
         return SearchResponse(
@@ -250,7 +282,7 @@ def search_sources(request: SearchRequest):
             route=route,
             results=[],
             uncertainty=True,
-            message="A route was detected, but no trusted source set is available yet."
+            message="A route was detected, but no allowed trusted source remains after source-governance filtering."
         )
 
     return SearchResponse(
