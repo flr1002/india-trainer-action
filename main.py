@@ -1,6 +1,10 @@
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import List, Optional
+import os
+import json
+from urllib import request as urllib_request
+from urllib.parse import urlparse
 
 app = FastAPI()
 
@@ -14,6 +18,7 @@ class SearchResult(BaseModel):
     url: str
     tier: str
     source_type: str
+    trust_level: str
     date: str
     credibility_score: float
     summary: str
@@ -25,24 +30,6 @@ class SearchResponse(BaseModel):
     uncertainty: bool
     message: str
 
-ALLOWED_SOURCE_TYPES = {
-    "government",
-    "government-linked",
-    "international_organisation",
-    "bilateral_institution",
-    "consulting",
-    "industry_body",
-    "business_media",
-    "academic-cultural-framework"
-}
-
-BLOCKED_SOURCE_TYPES = {
-    "low_trust",
-    "user_generated",
-    "promotional",
-    "ai_generated"
-}
-
 BLOCKED_KEYWORDS = [
     "reddit",
     "quora",
@@ -50,198 +37,135 @@ BLOCKED_KEYWORDS = [
     "medium"
 ]
 
-ROUTE_KEYWORDS = {
-    "fdi_entry_mode": [
-        "fdi", "foreign direct investment", "ownership", "entry mode",
-        "joint venture", "wholly owned", "subsidiary", "automatic route",
-        "approval route", "equity cap"
-    ],
-    "incorporation_compliance": [
-        "incorporation", "registration", "register company", "company setup",
-        "mca", "compliance", "private limited", "llp", "entity setup"
-    ],
-    "tax_customs": [
-        "tax", "gst", "customs", "duty", "duties", "tariff", "tariffs",
-        "import tax", "withholding tax"
-    ],
-    "sector_market": [
-        "sector", "market", "industry", "competition", "competitor",
-        "market size", "healthcare", "medical services", "medical devices",
-        "pharma", "retail", "manufacturing", "it services", "distribution"
-    ],
-    "labour_hr": [
-        "labour", "labor", "employment", "employee", "employees", "hiring",
-        "hr", "wages", "salary", "termination", "contract worker"
-    ],
-    "culture_leadership": [
-        "culture", "leadership", "hierarchy", "trust", "communication",
-        "relationship", "authority", "decision-making", "power distance"
-    ]
+BLOCKED_DOMAINS = {
+    "reddit.com": "user_generated",
+    "quora.com": "user_generated",
+    "wikipedia.org": "low_trust",
+    "medium.com": "low_trust",
+    "linkedin.com": "user_generated"
 }
 
-ROUTE_RESULTS = {
-    "fdi_entry_mode": [
-        SearchResult(
-            title="Consolidated FDI Policy",
-            source="DPIIT",
-            url="https://www.dpiit.gov.in/",
-            tier="tier1",
-            source_type="government",
-            date="2026-01-01",
-            credibility_score=0.98,
-            summary="Primary official source for FDI rules, entry structures, approval routes, and sectoral caps."
-        ),
-        SearchResult(
-            title="Invest India - FDI and Entry Overview",
-            source="Invest India",
-            url="https://www.investindia.gov.in/",
-            tier="tier1",
-            source_type="government-linked",
-            date="2026-01-01",
-            credibility_score=0.94,
-            summary="Practical entry-oriented overview for foreign investors, including sector and structure guidance."
-        )
-    ],
-    "incorporation_compliance": [
-        SearchResult(
-            title="Company Registration and Compliance",
-            source="MCA",
-            url="https://www.mca.gov.in/",
-            tier="tier1",
-            source_type="government",
-            date="2026-01-01",
-            credibility_score=0.98,
-            summary="Primary source for company incorporation, registration procedures, and compliance rules."
-        ),
-        SearchResult(
-            title="Invest India - Business Setup",
-            source="Invest India",
-            url="https://www.investindia.gov.in/",
-            tier="tier1",
-            source_type="government-linked",
-            date="2026-01-01",
-            credibility_score=0.94,
-            summary="Government-linked business setup guidance for foreign firms entering India."
-        )
-    ],
-    "tax_customs": [
-        SearchResult(
-            title="Indirect Taxes and Customs",
-            source="CBIC",
-            url="https://www.cbic.gov.in/",
-            tier="tier1",
-            source_type="government",
-            date="2026-01-01",
-            credibility_score=0.98,
-            summary="Primary source for GST, customs duties, tariffs, and indirect tax administration."
-        ),
-        SearchResult(
-            title="Tax and Regulatory Overview",
-            source="Deloitte India",
-            url="https://www2.deloitte.com/in/en.html",
-            tier="tier2",
-            source_type="consulting",
-            date="2026-01-01",
-            credibility_score=0.88,
-            summary="High-quality interpretive guidance on Indian tax and regulatory topics."
-        )
-    ],
-    "sector_market": [
-        SearchResult(
-            title="Sector and Investment Opportunities",
-            source="Invest India",
-            url="https://www.investindia.gov.in/",
-            tier="tier1",
-            source_type="government-linked",
-            date="2026-01-01",
-            credibility_score=0.94,
-            summary="Government-linked source for sector overviews, market opportunities, and investment themes."
-        ),
-        SearchResult(
-            title="Industry and Sector Reports",
-            source="FICCI",
-            url="https://ficci.in/",
-            tier="tier2",
-            source_type="industry_body",
-            date="2026-01-01",
-            credibility_score=0.88,
-            summary="Sector-level reports, industry sentiment, and market context."
-        )
-    ],
-    "labour_hr": [
-        SearchResult(
-            title="Labour and Employment Framework",
-            source="Invest India",
-            url="https://www.investindia.gov.in/",
-            tier="tier1",
-            source_type="government-linked",
-            date="2026-01-01",
-            credibility_score=0.94,
-            summary="Government-linked overview for employment-related operating topics."
-        ),
-        SearchResult(
-            title="Employment and HR Insights",
-            source="EY India",
-            url="https://www.ey.com/en_in",
-            tier="tier2",
-            source_type="consulting",
-            date="2026-01-01",
-            credibility_score=0.88,
-            summary="Interpretive guidance on workforce, labour, and HR topics in India."
-        )
-    ],
-    "culture_leadership": [
-        SearchResult(
-            title="Country Cultural Profile",
-            source="Hofstede Insights",
-            url="https://www.hofstede-insights.com/",
-            tier="tier4",
-            source_type="academic-cultural-framework",
-            date="2026-01-01",
-            credibility_score=0.80,
-            summary="Widely used comparative framework for cultural dimensions relevant to cross-border management."
-        ),
-        SearchResult(
-            title="Leadership and Culture Research",
-            source="GLOBE Study",
-            url="https://globeproject.com/",
-            tier="tier4",
-            source_type="academic-cultural-framework",
-            date="2026-01-01",
-            credibility_score=0.82,
-            summary="Research-based source on leadership expectations and cultural patterns."
-        )
-    ]
+HIGH_TRUST_DOMAIN_RULES = {
+    "dpiit.gov.in": {"source": "DPIIT", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
+    "investindia.gov.in": {"source": "Invest India", "tier": "tier1", "source_type": "government-linked", "credibility_score": 0.94},
+    "mca.gov.in": {"source": "MCA", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
+    "cbic.gov.in": {"source": "CBIC", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
+    "rbi.org.in": {"source": "RBI", "tier": "tier1", "source_type": "government", "credibility_score": 0.98}
 }
 
-def detect_route(query: str) -> Optional[str]:
-    q = query.lower()
-    route_scores = {}
+MEDIUM_TRUST_DOMAIN_RULES = {
+    "ficci.in": {"source": "FICCI", "tier": "tier2", "source_type": "industry_body", "credibility_score": 0.88},
+    "ey.com": {"source": "EY", "tier": "tier2", "source_type": "consulting", "credibility_score": 0.88},
+    "deloitte.com": {"source": "Deloitte", "tier": "tier2", "source_type": "consulting", "credibility_score": 0.88},
+    "hofstede-insights.com": {"source": "Hofstede Insights", "tier": "tier4", "source_type": "academic-cultural-framework", "credibility_score": 0.80},
+    "globeproject.com": {"source": "GLOBE Study", "tier": "tier4", "source_type": "academic-cultural-framework", "credibility_score": 0.82},
+    "indiajuris.com": {"source": "India Juris", "tier": "tier2", "source_type": "consulting", "credibility_score": 0.82},
+    "spiceroutelegal.com": {"source": "Spice Route Legal", "tier": "tier2", "source_type": "consulting", "credibility_score": 0.82},
+    "law.asia": {"source": "Law.asia", "tier": "tier3", "source_type": "business_media", "credibility_score": 0.75}
+}
 
-    for route, keywords in ROUTE_KEYWORDS.items():
-        score = 0
-        for keyword in keywords:
-            if keyword in q:
-                score += 1
-        if score > 0:
-            route_scores[route] = score
+TRUST_PRIORITY = {
+    "high_trust": 3,
+    "medium_trust": 2,
+    "unknown": 1,
+    "blocked": 0
+}
 
-    if not route_scores:
-        return None
+def normalize_domain(url: str) -> str:
+    try:
+        netloc = urlparse(url).netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        return netloc
+    except Exception:
+        return ""
 
-    return max(route_scores, key=route_scores.get)
+def classify_source(url: str):
+    domain = normalize_domain(url)
 
-def apply_source_governance(results: List[SearchResult]) -> List[SearchResult]:
-    filtered = []
+    for blocked_domain, blocked_type in BLOCKED_DOMAINS.items():
+        if domain == blocked_domain or domain.endswith("." + blocked_domain):
+            return {
+                "source": domain,
+                "tier": "blocked",
+                "source_type": blocked_type,
+                "trust_level": "blocked",
+                "credibility_score": 0.0
+            }
 
-    for result in results:
-        if result.source_type in BLOCKED_SOURCE_TYPES:
-            continue
-        if result.source_type not in ALLOWED_SOURCE_TYPES:
-            continue
-        filtered.append(result)
+    if domain.endswith(".gov.in"):
+        return {
+            "source": domain,
+            "tier": "tier1",
+            "source_type": "government",
+            "trust_level": "high_trust",
+            "credibility_score": 0.96
+        }
 
+    for allowed_domain, meta in HIGH_TRUST_DOMAIN_RULES.items():
+        if domain == allowed_domain or domain.endswith("." + allowed_domain):
+            return {
+                **meta,
+                "trust_level": "high_trust"
+            }
+
+    for allowed_domain, meta in MEDIUM_TRUST_DOMAIN_RULES.items():
+        if domain == allowed_domain or domain.endswith("." + allowed_domain):
+            return {
+                **meta,
+                "trust_level": "medium_trust"
+            }
+
+    return {
+        "source": domain or "unknown",
+        "tier": "unknown",
+        "source_type": "unclassified",
+        "trust_level": "unknown",
+        "credibility_score": 0.45
+    }
+
+def filter_and_rank_results(results: List[SearchResult]) -> List[SearchResult]:
+    filtered = [r for r in results if r.trust_level != "blocked"]
+    filtered.sort(
+        key=lambda r: (
+            TRUST_PRIORITY.get(r.trust_level, 0),
+            r.credibility_score
+        ),
+        reverse=True
+    )
     return filtered
+
+def has_sufficient_trust(results: List[SearchResult]) -> bool:
+    if any(r.trust_level == "high_trust" for r in results):
+        return True
+    medium_count = sum(1 for r in results if r.trust_level == "medium_trust")
+    return medium_count >= 2
+
+def call_tavily_search(query: str, max_results: int):
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        raise RuntimeError("TAVILY_API_KEY is not set.")
+
+    payload = {
+        "query": query,
+        "max_results": max_results,
+        "search_depth": "advanced",
+        "include_answer": False,
+        "include_raw_content": False
+    }
+
+    req = urllib_request.Request(
+        "https://api.tavily.com/search",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        },
+        method="POST"
+    )
+
+    with urllib_request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 @app.get("/")
 def root():
@@ -261,34 +185,56 @@ def search_sources(request: SearchRequest):
                 message="Blocked or low-trust source request detected."
             )
 
-    route = detect_route(request.query)
-
-    if route is None:
+    try:
+        tavily_data = call_tavily_search(request.query, max_results=min(request.max_results * 3, 10))
+    except Exception as e:
         return SearchResponse(
             query=request.query,
             route=None,
             results=[],
             uncertainty=True,
-            message="No sufficiently trusted source route found for this query. Do not infer beyond the retrieval output."
+            message=f"Search provider error: {str(e)}"
         )
 
-    raw_results = ROUTE_RESULTS.get(route, [])
-    governed_results = apply_source_governance(raw_results)
-    results = governed_results[:request.max_results]
+    raw_results = tavily_data.get("results", [])
+    parsed_results = []
 
-    if not results:
+    for item in raw_results:
+        url = item.get("url", "")
+        title = item.get("title", "Untitled")
+        summary = item.get("content", "") or item.get("snippet", "") or ""
+        meta = classify_source(url)
+
+        parsed_results.append(
+            SearchResult(
+                title=title,
+                source=meta["source"],
+                url=url,
+                tier=meta["tier"],
+                source_type=meta["source_type"],
+                trust_level=meta["trust_level"],
+                date="",
+                credibility_score=meta["credibility_score"],
+                summary=summary[:500]
+            )
+        )
+
+    ranked_results = filter_and_rank_results(parsed_results)
+    final_results = ranked_results[:request.max_results]
+
+    if not final_results or not has_sufficient_trust(final_results):
         return SearchResponse(
             query=request.query,
-            route=route,
-            results=[],
+            route=None,
+            results=final_results,
             uncertainty=True,
-            message="A route was detected, but no allowed trusted source remains after source-governance filtering."
+            message="No sufficiently precise trusted source found. Do not infer a specific rule."
         )
 
     return SearchResponse(
         query=request.query,
-        route=route,
-        results=results,
+        route=None,
+        results=final_results,
         uncertainty=False,
-        message="Trusted sources found."
+        message="Trusted or sufficiently credible sources found."
     )
