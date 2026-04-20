@@ -29,12 +29,20 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     uncertainty: bool
     message: str
+    disclaimer: Optional[str] = None
 
 BLOCKED_KEYWORDS = [
     "reddit",
     "quora",
     "wikipedia",
-    "medium"
+    "medium",
+    "linkedin",
+    "facebook",
+    "instagram",
+    "twitter",
+    "x.com",
+    "tiktok",
+    "youtube"
 ]
 
 BLOCKED_DOMAINS = {
@@ -42,18 +50,44 @@ BLOCKED_DOMAINS = {
     "quora.com": "user_generated",
     "wikipedia.org": "low_trust",
     "medium.com": "low_trust",
-    "linkedin.com": "user_generated"
+    "linkedin.com": "user_generated",
+    "facebook.com": "social_media",
+    "instagram.com": "social_media",
+    "x.com": "social_media",
+    "twitter.com": "social_media",
+    "tiktok.com": "social_media",
+    "youtube.com": "video_platform"
 }
 
-HIGH_TRUST_DOMAIN_RULES = {
+TIER1_DISCLAIMER = (
+    "This answer is based on sources that were retrieved successfully but are not "
+    "classified as Tier 1 sources in the system's trust hierarchy. It should "
+    "therefore be treated as indicative rather than fully verified. I recommend "
+    "an independent check before relying on it."
+)
+
+TIER1_DOMAIN_RULES = {
     "dpiit.gov.in": {"source": "DPIIT", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
     "investindia.gov.in": {"source": "Invest India", "tier": "tier1", "source_type": "government-linked", "credibility_score": 0.94},
+    "rbi.org.in": {"source": "RBI", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
+    "nsws.gov.in": {"source": "NSWS", "tier": "tier1", "source_type": "government", "credibility_score": 0.96},
+    "indiacode.nic.in": {"source": "India Code", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
     "mca.gov.in": {"source": "MCA", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
     "cbic.gov.in": {"source": "CBIC", "tier": "tier1", "source_type": "government", "credibility_score": 0.98},
-    "rbi.org.in": {"source": "RBI", "tier": "tier1", "source_type": "government", "credibility_score": 0.98}
+    "gst.gov.in": {"source": "GST Portal", "tier": "tier1", "source_type": "government", "credibility_score": 0.97},
+    "dgft.gov.in": {"source": "DGFT", "tier": "tier1", "source_type": "government", "credibility_score": 0.97},
+    "incometax.gov.in": {"source": "Income Tax Department", "tier": "tier1", "source_type": "government", "credibility_score": 0.97},
+    "epfindia.gov.in": {"source": "EPFO", "tier": "tier1", "source_type": "government", "credibility_score": 0.96},
+    "esic.gov.in": {"source": "ESIC", "tier": "tier1", "source_type": "government", "credibility_score": 0.96},
+    "bis.gov.in": {"source": "BIS", "tier": "tier1", "source_type": "government", "credibility_score": 0.96},
+    "fssai.gov.in": {"source": "FSSAI", "tier": "tier1", "source_type": "government", "credibility_score": 0.97},
+    "foscos.fssai.gov.in": {"source": "FoSCoS", "tier": "tier1", "source_type": "government-portal", "credibility_score": 0.97},
+    "cdsco.gov.in": {"source": "CDSCO", "tier": "tier1", "source_type": "government", "credibility_score": 0.96},
+    "sebi.gov.in": {"source": "SEBI", "tier": "tier1", "source_type": "government", "credibility_score": 0.97},
+    "ipindia.gov.in": {"source": "IP India", "tier": "tier1", "source_type": "government", "credibility_score": 0.96}
 }
 
-MEDIUM_TRUST_DOMAIN_RULES = {
+KNOWN_FALLBACK_DOMAIN_RULES = {
     "ficci.in": {"source": "FICCI", "tier": "tier2", "source_type": "industry_body", "credibility_score": 0.88},
     "ey.com": {"source": "EY", "tier": "tier2", "source_type": "consulting", "credibility_score": 0.88},
     "deloitte.com": {"source": "Deloitte", "tier": "tier2", "source_type": "consulting", "credibility_score": 0.88},
@@ -65,8 +99,8 @@ MEDIUM_TRUST_DOMAIN_RULES = {
 }
 
 TRUST_PRIORITY = {
-    "high_trust": 3,
-    "medium_trust": 2,
+    "tier1": 3,
+    "allowed": 2,
     "unknown": 1,
     "blocked": 0
 }
@@ -93,35 +127,26 @@ def classify_source(url: str):
                 "credibility_score": 0.0
             }
 
-    if domain.endswith(".gov.in"):
-        return {
-            "source": domain,
-            "tier": "tier1",
-            "source_type": "government",
-            "trust_level": "high_trust",
-            "credibility_score": 0.96
-        }
-
-    for allowed_domain, meta in HIGH_TRUST_DOMAIN_RULES.items():
+    for allowed_domain, meta in TIER1_DOMAIN_RULES.items():
         if domain == allowed_domain or domain.endswith("." + allowed_domain):
             return {
                 **meta,
-                "trust_level": "high_trust"
+                "trust_level": "tier1"
             }
 
-    for allowed_domain, meta in MEDIUM_TRUST_DOMAIN_RULES.items():
+    for allowed_domain, meta in KNOWN_FALLBACK_DOMAIN_RULES.items():
         if domain == allowed_domain or domain.endswith("." + allowed_domain):
             return {
                 **meta,
-                "trust_level": "medium_trust"
+                "trust_level": "allowed"
             }
 
     return {
         "source": domain or "unknown",
-        "tier": "unknown",
+        "tier": "tier2",
         "source_type": "unclassified",
-        "trust_level": "unknown",
-        "credibility_score": 0.45
+        "trust_level": "allowed",
+        "credibility_score": 0.6
     }
 
 def filter_and_rank_results(results: List[SearchResult]) -> List[SearchResult]:
@@ -135,11 +160,34 @@ def filter_and_rank_results(results: List[SearchResult]) -> List[SearchResult]:
     )
     return filtered
 
-def has_sufficient_trust(results: List[SearchResult]) -> bool:
-    if any(r.trust_level == "high_trust" for r in results):
-        return True
-    medium_count = sum(1 for r in results if r.trust_level == "medium_trust")
-    return medium_count >= 2
+def build_tier1_query(query: str) -> str:
+    site_filters = " OR ".join(f"site:{domain}" for domain in TIER1_DOMAIN_RULES)
+    return f"({site_filters}) {query}"
+
+def parse_search_results(raw_results: List[dict]) -> List[SearchResult]:
+    parsed_results = []
+
+    for item in raw_results:
+        url = item.get("url", "")
+        title = item.get("title", "Untitled")
+        summary = item.get("content", "") or item.get("snippet", "") or ""
+        meta = classify_source(url)
+
+        parsed_results.append(
+            SearchResult(
+                title=title,
+                source=meta["source"],
+                url=url,
+                tier=meta["tier"],
+                source_type=meta["source_type"],
+                trust_level=meta["trust_level"],
+                date="",
+                credibility_score=meta["credibility_score"],
+                summary=summary[:500]
+            )
+        )
+
+    return filter_and_rank_results(parsed_results)
 
 def call_tavily_search(query: str, max_results: int):
     api_key = os.getenv("TAVILY_API_KEY")
@@ -182,59 +230,75 @@ def search_sources(request: SearchRequest):
                 route=None,
                 results=[],
                 uncertainty=True,
-                message="Blocked or low-trust source request detected."
+                message="Blocked or disallowed source request detected.",
+                disclaimer=None
             )
 
     try:
-        tavily_data = call_tavily_search(request.query, max_results=min(request.max_results * 3, 10))
+        tier1_data = call_tavily_search(
+            build_tier1_query(request.query),
+            max_results=min(request.max_results * 3, 10)
+        )
     except Exception as e:
         return SearchResponse(
             query=request.query,
             route=None,
             results=[],
             uncertainty=True,
-            message=f"Search provider error: {str(e)}"
+            message=f"Search provider error: {str(e)}",
+            disclaimer=None
         )
 
-    raw_results = tavily_data.get("results", [])
-    parsed_results = []
+    tier1_results = [
+        result for result in parse_search_results(tier1_data.get("results", []))
+        if result.trust_level == "tier1"
+    ][:request.max_results]
 
-    for item in raw_results:
-        url = item.get("url", "")
-        title = item.get("title", "Untitled")
-        summary = item.get("content", "") or item.get("snippet", "") or ""
-        meta = classify_source(url)
-
-        parsed_results.append(
-            SearchResult(
-                title=title,
-                source=meta["source"],
-                url=url,
-                tier=meta["tier"],
-                source_type=meta["source_type"],
-                trust_level=meta["trust_level"],
-                date="",
-                credibility_score=meta["credibility_score"],
-                summary=summary[:500]
-            )
+    if tier1_results:
+        return SearchResponse(
+            query=request.query,
+            route="tier1_only",
+            results=tier1_results,
+            uncertainty=False,
+            message="Tier 1 sources found. Returning Tier 1 results only.",
+            disclaimer=None
         )
 
-    ranked_results = filter_and_rank_results(parsed_results)
-    final_results = ranked_results[:request.max_results]
-
-    if not final_results or not has_sufficient_trust(final_results):
+    try:
+        fallback_data = call_tavily_search(
+            request.query,
+            max_results=min(request.max_results * 3, 10)
+        )
+    except Exception as e:
         return SearchResponse(
             query=request.query,
             route=None,
-            results=final_results,
+            results=[],
             uncertainty=True,
-            message="No sufficiently precise trusted source found. Do not infer a specific rule."
+            message=f"Search provider error: {str(e)}",
+            disclaimer=None
+        )
+
+    fallback_results = [
+        result for result in parse_search_results(fallback_data.get("results", []))
+        if result.trust_level not in {"blocked", "tier1"}
+    ][:request.max_results]
+
+    if not fallback_results:
+        return SearchResponse(
+            query=request.query,
+            route="no_results",
+            results=[],
+            uncertainty=True,
+            message="No allowed sources were retrieved for this question.",
+            disclaimer=None
         )
 
     return SearchResponse(
         query=request.query,
-        route=None,
-        results=final_results,
-        uncertainty=False,
-        message="Trusted or sufficiently credible sources found."
+        route="fallback_non_tier1",
+        results=fallback_results,
+        uncertainty=True,
+        message="No Tier 1 sources were found. Returning allowed fallback sources.",
+        disclaimer=TIER1_DISCLAIMER
     )
