@@ -160,10 +160,6 @@ def filter_and_rank_results(results: List[SearchResult]) -> List[SearchResult]:
     )
     return filtered
 
-def build_tier1_query(query: str) -> str:
-    site_filters = " OR ".join(f"site:{domain}" for domain in TIER1_DOMAIN_RULES)
-    return f"({site_filters}) {query}"
-
 def parse_search_results(raw_results: List[dict]) -> List[SearchResult]:
     parsed_results = []
 
@@ -235,37 +231,7 @@ def search_sources(request: SearchRequest):
             )
 
     try:
-        tier1_data = call_tavily_search(
-            build_tier1_query(request.query),
-            max_results=min(request.max_results * 3, 10)
-        )
-    except Exception as e:
-        return SearchResponse(
-            query=request.query,
-            route=None,
-            results=[],
-            uncertainty=True,
-            message=f"Search provider error: {str(e)}",
-            disclaimer=None
-        )
-
-    tier1_results = [
-        result for result in parse_search_results(tier1_data.get("results", []))
-        if result.trust_level == "tier1"
-    ][:request.max_results]
-
-    if tier1_results:
-        return SearchResponse(
-            query=request.query,
-            route="tier1_only",
-            results=tier1_results,
-            uncertainty=False,
-            message="Tier 1 sources found. Returning Tier 1 results only.",
-            disclaimer=None
-        )
-
-    try:
-        fallback_data = call_tavily_search(
+        search_data = call_tavily_search(
             request.query,
             max_results=min(request.max_results * 3, 10)
         )
@@ -279,8 +245,25 @@ def search_sources(request: SearchRequest):
             disclaimer=None
         )
 
+    parsed_results = parse_search_results(search_data.get("results", []))
+
+    tier1_results = [
+        result for result in parsed_results
+        if result.trust_level == "tier1"
+    ][:request.max_results]
+
+    if tier1_results:
+        return SearchResponse(
+            query=request.query,
+            route="tier1_only",
+            results=tier1_results,
+            uncertainty=False,
+            message="Tier 1 sources found. Returning Tier 1 results only.",
+            disclaimer=None
+        )
+
     fallback_results = [
-        result for result in parse_search_results(fallback_data.get("results", []))
+        result for result in parsed_results
         if result.trust_level not in {"blocked", "tier1"}
     ][:request.max_results]
 
